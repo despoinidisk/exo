@@ -257,6 +257,8 @@ class Node:
 
 def main():
     args = Args.parse()
+    if args.cluster_namespace is not None:
+        os.environ["EXO_LIBP2P_NAMESPACE"] = args.cluster_namespace
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     target = min(max(soft, 65535), hard)
     resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
@@ -306,6 +308,7 @@ class Args(CamelCaseModel):
     offline: bool = os.getenv("EXO_OFFLINE", "false").lower() == "true"
     no_batch: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
+    cluster_namespace: str | None = None
 
     @classmethod
     def parse(cls) -> Self:
@@ -376,6 +379,14 @@ class Args(CamelCaseModel):
             action="store_false",
             dest="fast_synch",
             help="Force MLX FAST_SYNCH off",
+        )
+        parser.add_argument(
+            "-n",
+            "--namespace",
+            dest="cluster_namespace",
+            default=None,
+            metavar="NAME",
+            help="Cluster namespace for libp2p isolation (or set EXO_LIBP2P_NAMESPACE)",
         )
 
         args = parser.parse_args()
