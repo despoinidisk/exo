@@ -572,15 +572,9 @@ def apply_chat_template(
     original_template: str | None = getattr(tokenizer, "chat_template", None)
     if task_params.tools and isinstance(original_template, str):
         patched_template = _patch_lossy_chat_template(original_template)
-        if patched_template is not None:
-            logger.info(
-                "Patched lossy chat template (removed inner_type length guard)"
-            )
 
     template_kwargs: dict[str, Any] = {}
-    if patched_template is not None:
-        template_kwargs["chat_template"] = patched_template
-    elif not isinstance(original_template, str):
+    if not isinstance(original_template, str):
         template_kwargs["chat_template"] = FALLBACK_CHAT_TEMPLATE
         logger.info(
             "Tokenizer has no chat_template; using Mistral-style fallback"
@@ -595,8 +589,26 @@ def apply_chat_template(
         **extra_kwargs,
     )
 
-    if task_params.tools and _schemas_lost_in_prompt(prompt, task_params.tools):
-        logger.warning("Chat template lost nested tool schemas even after patching")
+    if (
+        task_params.tools
+        and patched_template is not None
+        and _schemas_lost_in_prompt(prompt, task_params.tools)
+    ):
+        logger.info(
+            "Default chat template lost nested tool schemas; retrying with patched template"
+        )
+        prompt = tokenizer.apply_chat_template(
+            formatted_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            tools=task_params.tools,
+            chat_template=patched_template,
+            **extra_kwargs,
+        )
+        if _schemas_lost_in_prompt(prompt, task_params.tools):
+            logger.warning(
+                "Chat template lost nested tool schemas even after patching"
+            )
 
     if partial_assistant_content:
         prompt += partial_assistant_content
