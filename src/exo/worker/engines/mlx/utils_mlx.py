@@ -466,6 +466,16 @@ _LOSSY_TEMPLATE_PATTERN = re.compile(
     r"""inner_type\s*==\s*["']object \| object["']\s*or\s*inner_type\|length\s*>\s*\d+""",
 )
 
+# Fallback when tokenizer has no chat_template (e.g. some MLX-converted models).
+# Mistral/Llama-style instruct format: [INST] user [/INST] assistant ...
+FALLBACK_CHAT_TEMPLATE = (
+    "{{ bos_token }}{% for message in messages %}"
+    "{% if message['role'] == 'system' %}{{ message['content'] }}{% elif message['role'] == 'user' %}"
+    "[INST] {{ message['content'] }} [/INST]"
+    "{% elif message['role'] == 'assistant' %} {{ message['content'] }}{% endif %}"
+    "{% endfor %}{% if add_generation_prompt %} {% endif %}"
+)
+
 
 def _patch_lossy_chat_template(template: str) -> str | None:
     """Patch chat templates that collapse nested object schemas to ``any[]``.
@@ -559,21 +569,29 @@ def apply_chat_template(
         extra_kwargs["reasoning_effort"] = task_params.reasoning_effort
 
     patched_template: str | None = None
-    if task_params.tools:
-        original_template: str | None = getattr(tokenizer, "chat_template", None)
-        if isinstance(original_template, str):
-            patched_template = _patch_lossy_chat_template(original_template)
-            if patched_template is not None:
-                logger.info(
-                    "Patched lossy chat template (removed inner_type length guard)"
-                )
+    original_template: str | None = getattr(tokenizer, "chat_template", None)
+    if task_params.tools and isinstance(original_template, str):
+        patched_template = _patch_lossy_chat_template(original_template)
+        if patched_template is not None:
+            logger.info(
+                "Patched lossy chat template (removed inner_type length guard)"
+            )
+
+    template_kwargs: dict[str, Any] = {}
+    if patched_template is not None:
+        template_kwargs["chat_template"] = patched_template
+    elif not isinstance(original_template, str):
+        template_kwargs["chat_template"] = FALLBACK_CHAT_TEMPLATE
+        logger.info(
+            "Tokenizer has no chat_template; using Mistral-style fallback"
+        )
 
     prompt: str = tokenizer.apply_chat_template(
         formatted_messages,
         tokenize=False,
         add_generation_prompt=True,
         tools=task_params.tools,
-        **({"chat_template": patched_template} if patched_template is not None else {}),
+        **template_kwargs,
         **extra_kwargs,
     )
 
